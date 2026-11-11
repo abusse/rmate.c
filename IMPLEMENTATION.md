@@ -279,6 +279,9 @@ waits for these to be closed and would otherwise hang until the editor closes
 the file. Two exceptions: stdout stays open in stdin mode, where the save is
 written to it, and stderr stays open if it is a terminal.
 
+Once stderr is gone, `log_msg()` sends its messages to syslog (identifier
+`rmate`, facility `user`), so that a failed save still leaves a trace.
+
 ### Wait Mode (`-w`)
 
 The process stays in the foreground and blocks in the receive loop until the

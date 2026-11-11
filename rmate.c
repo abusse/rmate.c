@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <syslog.h>
 #include <unistd.h>
 
 #define HOST_ENV "RMATE_HOST"
@@ -26,6 +27,8 @@
 #define PROTO_BUF_SIZE (PATH_MAX + 256)
 
 int verbose = 0;
+/* Set once the background process has given up its stderr. */
+int log_to_syslog = 0;
 
 enum CMD_STATE
 {
@@ -54,16 +57,26 @@ static const struct
 {
     const char* label;
     const char* color;
+    int priority;
 } log_styles[] = {
-    [INFO] = { "Info:", "\033[32m" },
-    [WARNING] = { "Warning:", "\033[33m" },
-    [ERROR] = { "Error:", "\033[31m" },
+    [INFO] = { "Info:", "\033[32m", LOG_INFO },
+    [WARNING] = { "Warning:", "\033[33m", LOG_WARNING },
+    [ERROR] = { "Error:", "\033[31m", LOG_ERR },
 };
 
 void
 log_msg(enum log_type type, const char* fmt, ...)
 {
+    va_list ap;
+
     if (type == INFO && !verbose) {
+        return;
+    }
+
+    if (log_to_syslog) {
+        va_start(ap, fmt);
+        vsyslog(log_styles[type].priority, fmt, ap);
+        va_end(ap);
         return;
     }
 
@@ -73,7 +86,6 @@ log_msg(enum log_type type, const char* fmt, ...)
         fprintf(stderr, "%s ", log_styles[type].label);
     }
 
-    va_list ap;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
@@ -979,6 +991,7 @@ close_connection(int sockfd)
  *
  * stdout stays if a save goes there (stdin mode). stderr stays if it is a
  * terminal: that keeps nobody waiting, and it is where errors get read.
+ * Without it, messages go to syslog from here on.
  */
 void
 release_stdio(int keep_stdout)
@@ -994,6 +1007,8 @@ release_stdio(int keep_stdout)
     }
     if (!isatty(STDERR_FILENO)) {
         dup2(null_fd, STDERR_FILENO);
+        openlog("rmate", LOG_PID, LOG_USER);
+        log_to_syslog = 1;
     }
     if (null_fd > STDERR_FILENO) {
         close(null_fd);
