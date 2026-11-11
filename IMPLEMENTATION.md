@@ -273,6 +273,12 @@ After sending all files, `main()` forks. The parent exits immediately
 the controlling terminal before entering the receive loop. This prevents
 `SIGHUP` or `SIGINT` from killing the background process.
 
+The child then calls `release_stdio()`, which points stdin, stdout and stderr
+at `/dev/null`. A caller without a terminal, such as `ssh host rmate file`,
+waits for these to be closed and would otherwise hang until the editor closes
+the file. Two exceptions: stdout stays open in stdin mode, where the save is
+written to it, and stderr stays open if it is a terminal.
+
 ### Wait Mode (`-w`)
 
 The process stays in the foreground and blocks in the receive loop until the

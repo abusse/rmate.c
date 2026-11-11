@@ -972,6 +972,34 @@ close_connection(int sockfd)
     close(sockfd);
 }
 
+/*
+ * Whoever started rmate without a terminal, as in "ssh host rmate file", waits
+ * for its stdout and stderr to be closed, not just for the foreground process
+ * to exit. So the background process lets go of them.
+ *
+ * stdout stays if a save goes there (stdin mode). stderr stays if it is a
+ * terminal: that keeps nobody waiting, and it is where errors get read.
+ */
+void
+release_stdio(int keep_stdout)
+{
+    int null_fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+
+    if (null_fd == -1) {
+        return;
+    }
+    dup2(null_fd, STDIN_FILENO);
+    if (!keep_stdout) {
+        dup2(null_fd, STDOUT_FILENO);
+    }
+    if (!isatty(STDERR_FILENO)) {
+        dup2(null_fd, STDERR_FILENO);
+    }
+    if (null_fd > STDERR_FILENO) {
+        close(null_fd);
+    }
+}
+
 int
 main(int argc, char* argv[])
 {
@@ -981,6 +1009,7 @@ main(int argc, char* argv[])
     char hostname[HOST_NAME_MAX + 1];
     char* stdin_data = NULL;
     size_t stdin_len = 0;
+    int stdin_mode = 0;
     int save_errors = 0;
 
     signal(SIGCHLD, SIG_IGN);
@@ -999,6 +1028,7 @@ main(int argc, char* argv[])
 
     for (int i = 0; i < argc; i++) {
         if (!strcmp(argv[i], "-")) {
+            stdin_mode = 1;
             /* Only read stdin once; multiple "-" args reuse the same data. */
             if (!stdin_data) {
                 if (isatty(STDIN_FILENO)) {
@@ -1045,6 +1075,7 @@ main(int argc, char* argv[])
         }
         /* Detach from the controlling terminal so SIGHUP/SIGINT won't reach us. */
         setsid();
+        release_stdio(stdin_mode);
     }
 
     ret = receive_loop(sockfd, argc, argv, &save_errors);

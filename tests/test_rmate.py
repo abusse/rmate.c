@@ -504,7 +504,6 @@ class BackgroundTest(RmateTestCase):
         self.assertNotEqual(done.returncode, 0)
         self.assertIn(b"Could not connect", done.stderr)
 
-    @unittest.expectedFailure  # the background process keeps stdout and stderr open
     def test_releases_stdio_so_callers_without_a_terminal_return(self):
         # `ssh host rmate file` waits for EOF on rmate's stdout and stderr, not just for its exit.
         self.write("file.txt", b"old\n")
