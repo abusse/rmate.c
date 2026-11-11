@@ -422,7 +422,7 @@ write_save(const char* filename, const char* data, size_t len)
         fd = fcntl(STDOUT_FILENO, F_DUPFD_CLOEXEC, 0);
     } else {
         log_msg(INFO, "Saving %s (%zu bytes)", filename, len);
-        fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
     }
 
     if (fd == -1) {

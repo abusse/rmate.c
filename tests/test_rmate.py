@@ -175,7 +175,7 @@ class RmateTestCase(unittest.TestCase):
         except FileNotFoundError:
             return None
 
-    def edit(self, files, editor_script=None, options=(), stdin=None):
+    def edit(self, files, editor_script=None, options=(), stdin=None, umask=-1):
         """Run `rmate -w` on `files` (relative to the test directory).
 
         Once all files have been opened, `editor_script(editor)` plays the
@@ -191,7 +191,7 @@ class RmateTestCase(unittest.TestCase):
         player = threading.Thread(target=play, daemon=True)
         player.start()
         command = [RMATE, "-w", "-p", str(editor.port)] + list(options) + list(files)
-        done = subprocess.run(command, cwd=self.dir, input=stdin, timeout=TIMEOUT,
+        done = subprocess.run(command, cwd=self.dir, input=stdin, timeout=TIMEOUT, umask=umask,
                               stdin=None if stdin is not None else subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         editor.give_up()  # rmate is gone; stop waiting if it never opened anything
@@ -267,6 +267,13 @@ class OpenTest(RmateTestCase):
                 self.assertEqual([o["content"] for o in result.opens], [b""])
                 self.assertEqual(result.opens[0]["real-path"], os.path.join(os.path.realpath(self.dir), name))
                 self.assertEqual(self.read(name), b"hello\n")
+
+    def test_new_file_gets_its_mode_from_the_umask(self):
+        for umask, mode in ((0o002, 0o664), (0o022, 0o644), (0o077, 0o600)):
+            with self.subTest(umask=oct(umask)):
+                name = "new-%o.txt" % umask
+                self.edit([name], lambda editor: editor.save(name, b"hello\n"), umask=umask)
+                self.assertEqual(os.stat(self.path(name)).st_mode & 0o777, mode)
 
     def test_new_file_is_not_created_without_save(self):
         result = self.edit(["typo.txt"], lambda editor: editor.close_file("typo.txt"))

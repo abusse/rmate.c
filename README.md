@@ -154,7 +154,7 @@ make check
 ```
 
 builds `rmate` and runs the tests in `tests/test_rmate.py` against it. They need
-Python 3 and nothing else: a fake editor in the test file plays the editor side
+Python 3.9 or later and nothing else: a fake editor in the test file plays the editor side
 of the protocol the way RemoteSubl does, so no editor and no SSH tunnel are
 involved. Tests marked as expected failures document known defects.
 
