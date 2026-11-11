@@ -18,11 +18,15 @@ protocol helpers, then option parsing and high-level orchestration, then
 struct cmd {
     enum CMD_STATE state;   /* CMD_HEADER, CMD_CMD, or CMD_VAR */
     char* filename;         /* token from the server (heap-allocated) */
+    char* const* files;     /* tokens of the files this session has opened */
+    int n_files;
 };
 ```
 
 This is the state machine context for parsing server responses. A single
-instance is reused across all commands on one connection.
+instance is reused across all commands on one connection. `files` points
+at the file arguments of the command line, which are the tokens sent in the
+`open` commands.
 
 ### `enum CMD_STATE`
 
@@ -123,7 +127,7 @@ Takes in the data of a save and writes it to disk:
 ssize_t receive_save(int sockfd,
                      const char* buf_remaining,
                      size_t buf_remaining_len,
-                     const char* filename,
+                     const struct cmd* cmd_state,
                      size_t file_size,
                      int* save_errors);
 ```
@@ -144,6 +148,13 @@ opening the file means truncating it. The price is memory: a save needs as
 much of it as the file is large. (Sending a file to the editor is streamed
 and needs none.)
 
+The token names the file to write, and the editor could put any path there.
+`receive_save()` therefore writes only if the token is one of
+`cmd_state->files`, the files this session has opened. Whoever answers on the
+editor's port — it is a TCP port on localhost, open to every user of the
+machine while the SSH tunnel is down — can then change the files handed to
+it, but no others.
+
 If the token is `"-"`, `write_save()` writes to stdout instead of a file,
 enabling `echo "text" | rmate -w - > edited.txt`.
 
@@ -151,8 +162,8 @@ enabling `echo "text" | rmate -w - > edited.txt`.
 files. If `receive_save()` returned a fatal error on one file's save failure,
 the receive loop would exit and subsequent saves for other files would never
 be processed. To avoid this, a save that fails after its data has arrived (no
-token, open error, write error) increments the caller's `*save_errors`
-counter instead of returning -1. The data has been consumed, so the protocol
+token, a token that was not opened, open error, write error) increments the
+caller's `*save_errors` counter instead of returning -1. The data has been consumed, so the protocol
 is still in sync and the loop continues. After the loop exits, the counter is
 checked and the process exit code is set to 1 if any saves failed.
 

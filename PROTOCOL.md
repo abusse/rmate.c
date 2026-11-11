@@ -78,6 +78,9 @@ The client reads the `data` bytes (partly from the buffer, the rest directly
 from the socket) and, once it has all of them, writes them to the file named
 by `token`. After the data, an empty line ends the command.
 
+The client honours a save only if `token` is one it has sent in an `open`
+command on this connection. A save for any other token is read and dropped.
+
 If `data` is not a plain decimal number, the client gives up on the
 connection: it cannot tell where the data ends.
 

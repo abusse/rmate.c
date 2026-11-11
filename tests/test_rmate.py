@@ -422,7 +422,6 @@ class SaveSafetyTest(RmateTestCase):
         self.assertEqual(self.read("file.txt"), b"old\n")
         self.assertNotEqual(result.status, 0)
 
-    @unittest.expectedFailure  # any path the editor names is written, and created if missing
     def test_save_for_a_file_that_was_not_opened_is_refused(self):
         self.write("file.txt", b"opened\n")
         self.write("other.txt", b"not opened\n")
@@ -433,6 +432,8 @@ class SaveSafetyTest(RmateTestCase):
         self.assertIsNone(self.read("planted.txt"))
         self.assertEqual(self.read("file.txt"), b"saved\n", "the session must carry on")
         self.assertNotEqual(result.status, 0)
+        self.assertIn("Refusing to save other.txt", result.stderr)
+        self.assertIn("Refusing to save planted.txt", result.stderr)
 
 
 class BackgroundTest(RmateTestCase):

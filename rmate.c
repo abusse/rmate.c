@@ -37,6 +37,9 @@ struct cmd
 {
     enum CMD_STATE state;
     char* filename;
+    /* The tokens of the files this session has sent to the editor. */
+    char* const* files;
+    int n_files;
 };
 
 enum log_type
@@ -340,6 +343,17 @@ send_file(int sockfd, const char* filename, const char* display_name, int line)
 }
 
 int
+is_open_file(const struct cmd* cmd_state, const char* token)
+{
+    for (int i = 0; i < cmd_state->n_files; i++) {
+        if (!strcmp(cmd_state->files[i], token)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int
 write_save(const char* filename, const char* data, size_t len)
 {
     int fd;
@@ -377,6 +391,9 @@ write_save(const char* filename, const char* data, size_t len)
  * save can still fall through (connection lost, bogus length) and must not
  * have touched the file.
  *
+ * The editor names the file by its token, and any path would do as one. Only
+ * the files this session has opened are written.
+ *
  * Returns the number of bytes taken from buf_remaining, or -1 if the data
  * could not be read, which leaves the connection unusable. A save that fails
  * later than that is counted in *save_errors and the session carries on.
@@ -385,10 +402,11 @@ ssize_t
 receive_save(int sockfd,
              const char* buf_remaining,
              size_t buf_remaining_len,
-             const char* filename,
+             const struct cmd* cmd_state,
              size_t file_size,
              int* save_errors)
 {
+    const char* filename = cmd_state->filename;
     size_t from_buf = (buf_remaining_len < file_size) ? buf_remaining_len : file_size;
     char* data = malloc(file_size ? file_size : 1);
 
@@ -405,6 +423,9 @@ receive_save(int sockfd,
 
     if (!filename) {
         log_msg(ERROR, "Received data without token, ignoring");
+        (*save_errors)++;
+    } else if (!is_open_file(cmd_state, filename)) {
+        log_msg(ERROR, "Refusing to save %s: not opened by this session", filename);
         (*save_errors)++;
     } else if (write_save(filename, data, file_size) == -1) {
         (*save_errors)++;
@@ -469,7 +490,7 @@ handle_line(int sockfd, char* buf, size_t len, struct cmd* cmd_state, int* save_
         case CMD_CMD:
             if ((read_len = read_line(buf, len)) > 0 && *buf != '\0') {
                 free(cmd_state->filename);
-                memset(cmd_state, 0, sizeof(*cmd_state));
+                cmd_state->filename = NULL;
 
                 if (!strcmp(buf, "close")) {
                     log_msg(INFO, "Received close command");
@@ -520,7 +541,7 @@ handle_line(int sockfd, char* buf, size_t len, struct cmd* cmd_state, int* save_
                     return -1;
                 }
                 data_consumed =
-                  receive_save(sockfd, buf + read_len, len - read_len, cmd_state->filename, data_len, save_errors);
+                  receive_save(sockfd, buf + read_len, len - read_len, cmd_state, data_len, save_errors);
                 if (data_consumed < 0) {
                     return -1;
                 }
@@ -820,11 +841,11 @@ send_files(int sockfd,
 }
 
 int
-receive_loop(int sockfd, int* save_errors)
+receive_loop(int sockfd, int n_files, char* const* files, int* save_errors)
 {
     char buf[PROTO_BUF_SIZE];
     size_t buf_used = 0;
-    struct cmd cmd_state = { 0 };
+    struct cmd cmd_state = { .files = files, .n_files = n_files };
     int ret = 0;
 
     while (1) {
@@ -967,7 +988,7 @@ main(int argc, char* argv[])
         setsid();
     }
 
-    ret = receive_loop(sockfd, &save_errors);
+    ret = receive_loop(sockfd, argc, argv, &save_errors);
 
 cleanup:
     if (sockfd != -1) {
