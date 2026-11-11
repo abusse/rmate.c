@@ -736,7 +736,7 @@ version(void)
     const char* build_id = "";
 #endif
     fprintf(stdout,
-            "rmate 2.0.0%s\n"
+            "rmate 2.1.0%s\n"
             "Copyright (c) 2014 Mael Clerambault\n"
             "Copyright (c) 2026 Jianrong Zhao\n",
             build_id);

@@ -103,7 +103,7 @@ in the same session, and refuses any other path.
 
 ## History
 
-### Since 2.0.0
+### 2.1.0
 
 Most of these are fixes for ways in which a save could go wrong. Each comes
 with a test.
