@@ -735,7 +735,7 @@ version(void)
 #else
     const char* build_id = "";
 #endif
-    fprintf(stderr,
+    fprintf(stdout,
             "rmate 2.0.0%s (%s)\n"
             "Copyright (c) 2014 Mael Clerambault\n"
             "Copyright (c) 2026 Jianrong Zhao\n",
@@ -744,9 +744,9 @@ version(void)
 }
 
 void
-usage(void)
+usage(FILE* out)
 {
-    fprintf(stderr,
+    fprintf(out,
             "Usage: rmate [options] file [file ...]\n"
             "       rmate [options] -      (read from stdin and write the edit to stdout)\n"
             "       rmate [options] - >out (read from stdin and save the edit to file 'out')\n"
@@ -786,7 +786,7 @@ struct options
 /*
  * Returns:
  *   0  success, opts populated, *out_argc / *out_argv set to remaining args
- *   1  error (message already logged)
+ *   1  error (message or usage already printed)
  *  -1  early exit (version/help already printed, caller should exit 0)
  */
 int
@@ -844,9 +844,11 @@ parse_options(int orig_argc, char* orig_argv[], int* out_argc, char*** out_argv,
                 version();
                 return -1;
             case 'h':
-            default:
-                usage();
+                usage(stdout);
                 return -1;
+            default:
+                usage(stderr);
+                return 1;
         }
     }
 
@@ -854,8 +856,8 @@ parse_options(int orig_argc, char* orig_argv[], int* out_argc, char*** out_argv,
     *out_argv = orig_argv + optind;
 
     if (*out_argc < 1) {
-        usage();
-        return -1;
+        usage(stderr);
+        return 1;
     }
 
     if (!strcmp(opts->host, "auto")) {

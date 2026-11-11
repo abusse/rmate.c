@@ -465,6 +465,42 @@ class SaveSafetyTest(RmateTestCase):
         self.assertIn("Refusing to save planted.txt", result.stderr)
 
 
+class CommandLineTest(RmateTestCase):
+    def rmate(self, *arguments):
+        done = subprocess.run([RMATE] + list(arguments), cwd=self.dir, timeout=TIMEOUT, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return done.returncode, done.stdout.decode(), done.stderr.decode()
+
+    def test_help_goes_to_stdout(self):
+        status, stdout, stderr = self.rmate("-h")
+        self.assertEqual(status, 0)
+        self.assertIn("Usage: rmate", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_version_goes_to_stdout(self):
+        status, stdout, stderr = self.rmate("-V")
+        self.assertEqual(status, 0)
+        self.assertRegex(stdout, r"^rmate \d+\.\d+\.\d+")
+        self.assertEqual(stderr, "")
+
+    def test_unknown_option_is_an_error(self):
+        status, stdout, stderr = self.rmate("-Z", "file.txt")
+        self.assertNotEqual(status, 0)
+        self.assertIn("Usage: rmate", stderr)
+        self.assertEqual(stdout, "")
+
+    def test_missing_file_argument_is_an_error(self):
+        status, stdout, stderr = self.rmate()
+        self.assertNotEqual(status, 0)
+        self.assertIn("Usage: rmate", stderr)
+        self.assertEqual(stdout, "")
+
+    def test_invalid_line_number_is_an_error(self):
+        status, _, stderr = self.rmate("-l", "abc", "file.txt")
+        self.assertNotEqual(status, 0)
+        self.assertIn("Invalid line number", stderr)
+
+
 class BackgroundTest(RmateTestCase):
     """Without -w, rmate returns at once and a detached process handles the saves."""
 
