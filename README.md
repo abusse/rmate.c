@@ -13,6 +13,11 @@ tunnel. The C version is a drop-in replacement for the
 [Ruby](https://github.com/textmate/rmate) versions, with significantly faster
 startup, lower memory usage, and zero runtime dependencies.
 
+This is a fork of [silverzhaojr/rmate.c](https://github.com/silverzhaojr/rmate.c),
+the rewrite of the original [hanklords/rmate.c](https://github.com/hanklords/rmate.c).
+It fixes several ways in which a save could damage a file and adds a test
+suite. [History](#history) has the details.
+
 ## Quick Start
 
 ```sh
@@ -74,17 +79,72 @@ Options:
 
 Setting `RMATE_HOST=auto` detects the client IP from `SSH_CONNECTION`.
 
-## Enhancements over the Original C Version
+## Exit Status
 
-This is a rewrite of the original
-[rmate.c by Mael Clerambault](https://github.com/hanklords/rmate.c). The following
-is a summary of changes compared to the upstream `origin/master`.
+`rmate` exits with 0 on success and with 1 if something went wrong: a mistake
+on the command line, a file that cannot be opened, an editor that cannot be
+reached, a broken connection, or a save that failed.
 
-**NOTE**: The code changes are made with the help of [Cursor CLI](https://cursor.com/cli),
-but I spent a lot of time reviewing and revising them very carefully. So don't
-panic, it's not just trivial AI generated code :-).
+Without `-w` the exit status only covers what happens before `rmate` goes
+into the background, which is everything up to and including sending the
+files to the editor. What goes wrong later is reported on the terminal. A
+background process started without a terminal, as in `ssh host rmate file`,
+reports to syslog instead, as `rmate`.
 
-### New Features
+## Security
+
+The editor's port is a plain TCP port on `localhost`. With the SSH tunnel up
+it leads to your editor. Without it, any user of the machine can listen
+there, and `rmate` cannot tell the difference.
+
+Whoever answers on the port is sent the files you open, and can save them.
+That is as far as it goes: `rmate` writes a save only to a file it has opened
+in the same session, and refuses any other path.
+
+## History
+
+### Since 2.0.0
+
+Most of these are fixes for ways in which a save could go wrong. Each comes
+with a test.
+
+- **A save is complete before the file is touched.** 2.0.0 truncated the file
+  first and then filled it from the network, so a connection lost mid-save
+  left a truncated file, and so did a malformed length. The new content is
+  now held in memory until all of it has arrived.
+- **A save is only accepted for a file that was opened.** 2.0.0 wrote to
+  whatever path the editor named and created it if it did not exist. See
+  [Security](#security).
+- **A header line split across two packets no longer drops the save.**
+- **A malformed save cannot derail the session.** The data of a save without
+  token is skipped, where 2.0.0 parsed it as commands. A length that is not a
+  number ends the session, since the end of the data cannot be found.
+- **A file that does not exist yet is created by its first save**, with a
+  mode that follows the umask. 2.0.0 created it when it was opened, which
+  left an empty file behind if it was closed without saving.
+- **The background process lets go of stdin, stdout and stderr**, so
+  `ssh host rmate file` returns at once. 2.0.0 kept the caller waiting until
+  the editor closed the file. Without a terminal, errors go to syslog.
+- **`-h` and `-V` print to stdout, and a mistake on the command line exits
+  with status 1.** 2.0.0 printed to stderr and exited with 0 in all three
+  cases.
+- **The build honours `CFLAGS`, `CPPFLAGS` and `LDFLAGS`**, and the version
+  output no longer contains the day of the build.
+- **There is a test suite**: `make check`, see [Testing](#testing).
+
+### 2.0.0: the Rewrite
+
+Version 2.0.0 is a rewrite of the original
+[rmate.c by Mael Clerambault](https://github.com/hanklords/rmate.c) by
+Jianrong Zhao, who wrote about it:
+
+> The code changes are made with the help of [Cursor CLI](https://cursor.com/cli),
+> but I spent a lot of time reviewing and revising them very carefully. So don't
+> panic, it's not just trivial AI generated code :-).
+
+The following is a summary of its changes compared to the original.
+
+#### New Features
 
 - **Stdin support (`-`)**: Read from stdin, send to the editor, and write the
   edited result back to stdout. The original only supported named files.
@@ -101,7 +161,7 @@ panic, it's not just trivial AI generated code :-).
 - **Auto host detection (`-H auto`)**: Automatically extract the client IP
   from the `SSH_CONNECTION` environment variable.
 
-### Robustness Improvements
+#### Robustness Improvements
 
 - **Complete rewrite of I/O handling**: All `read()`/`write()` calls handle
   `EINTR`, partial reads, and partial writes correctly. The original used bare
@@ -156,7 +216,7 @@ make check
 builds `rmate` and runs the tests in `tests/test_rmate.py` against it. They need
 Python 3.9 or later and nothing else: a fake editor in the test file plays the editor side
 of the protocol the way RemoteSubl does, so no editor and no SSH tunnel are
-involved. Tests marked as expected failures document known defects.
+involved.
 
 ## Protocol
 
@@ -169,4 +229,6 @@ details.
 
 ## License
 
-Based on [rmate.c](https://github.com/hanklords/rmate.c) by Mael Clerambault.
+ISC, see [LICENSE](LICENSE). Based on
+[rmate.c](https://github.com/hanklords/rmate.c) by Mael Clerambault, rewritten
+by Jianrong Zhao.
