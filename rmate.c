@@ -168,15 +168,11 @@ read_all(int fd, char* buf, size_t len)
     return 0;
 }
 
-/*
- * If drain_on_write_fail is set, a write failure stops writing but keeps
- * reading until all len bytes are consumed, so the source stream stays in sync.
- */
+/* Copies len bytes from from_fd to to_fd. */
 int
-stream_data(int from_fd, int to_fd, size_t len, int drain_on_write_fail)
+stream_data(int from_fd, int to_fd, size_t len)
 {
     char tmp[BUFSIZ];
-    int write_failed = 0;
 
     while (len > 0) {
         size_t to_read = len < sizeof(tmp) ? len : sizeof(tmp);
@@ -193,18 +189,13 @@ stream_data(int from_fd, int to_fd, size_t len, int drain_on_write_fail)
             log_msg(ERROR, "Unexpected EOF (%zu bytes remaining)", len);
             return -1;
         }
-        if (to_fd >= 0 && write_all(to_fd, tmp, n) == -1) {
+        if (write_all(to_fd, tmp, n) == -1) {
             log_msg(ERROR, "Failed to write data: %s", strerror(errno));
-            if (!drain_on_write_fail) {
-                return -1;
-            }
-            log_msg(WARNING, "Write failed, draining remaining data");
-            to_fd = -1;
-            write_failed = 1;
+            return -1;
         }
         len -= n;
     }
-    return write_failed;
+    return 0;
 }
 
 int
@@ -257,7 +248,7 @@ send_open(int sockfd,
             return -1;
         }
     } else if (data_fd >= 0) {
-        if (stream_data(data_fd, sockfd, data_len, 0) == -1) {
+        if (stream_data(data_fd, sockfd, data_len) == -1) {
             log_msg(ERROR, "Failed to stream file data to editor");
             return -1;
         }

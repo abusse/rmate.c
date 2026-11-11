@@ -177,15 +177,12 @@ or if the other side closes the connection first.
 Transfers `len` bytes from `from_fd` to `to_fd` in `BUFSIZ` chunks:
 
 ```c
-int stream_data(int from_fd, int to_fd, size_t len, int drain_on_write_fail);
+int stream_data(int from_fd, int to_fd, size_t len);
 ```
 
 - Handles `EINTR` on reads.
 - Detects unexpected EOF.
-- Returns -1 on read failure, 0 on success, or 1 if `drain_on_write_fail`
-  was set and a write failed (data was fully drained but not written).
-- If `drain_on_write_fail` is set and a write fails, sets `to_fd = -1` and
-  continues reading until all `len` bytes are consumed.
+- Returns 0 on success, -1 on failure.
 
 ### read\_stdin()
 
