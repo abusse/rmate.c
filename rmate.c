@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <libgen.h>
 #include <limits.h>
 #include <netdb.h>
 #include <signal.h>
@@ -271,6 +272,36 @@ send_stdin(int sockfd, const char* display_name, const char* data, size_t data_l
     return send_open(sockfd, display_name, "-", "-", -1, data, data_len, line);
 }
 
+/* A file that does not exist yet is created by its first save, which takes a writable directory. */
+int
+check_new_file(const char* filename, int force)
+{
+    char dir_buf[PATH_MAX];
+    const char* dir;
+
+    if (strlen(filename) >= sizeof(dir_buf)) {
+        log_msg(ERROR, "Failed to stat file %s: %s", filename, strerror(ENAMETOOLONG));
+        return -1;
+    }
+    strcpy(dir_buf, filename);
+    dir = dirname(dir_buf);
+
+    if (access(dir, W_OK | X_OK) == -1) {
+        if (errno != EACCES && errno != EROFS) {
+            log_msg(ERROR, "Failed to access directory %s: %s", dir, strerror(errno));
+            return -1;
+        }
+        if (!force) {
+            log_msg(ERROR, "File %s cannot be created! Use -f to open anyway", filename);
+            return -1;
+        }
+        log_msg(WARNING, "File %s cannot be created, opening anyway", filename);
+    }
+
+    log_msg(INFO, "%s is a new file", filename);
+    return 0;
+}
+
 int
 check_file(const char* filename, int force)
 {
@@ -286,14 +317,7 @@ check_file(const char* filename, int force)
             log_msg(ERROR, "Failed to stat file %s: %s", filename, strerror(errno));
             return -1;
         }
-        log_msg(INFO, "Creating new file %s", filename);
-        int fd = open(filename, O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
-        if (fd == -1) {
-            log_msg(ERROR, "Failed to create file %s: %s", filename, strerror(errno));
-            return -1;
-        }
-        close(fd);
-        return 0;
+        return check_new_file(filename, force);
     }
 
     if (S_ISDIR(st.st_mode)) {
@@ -315,30 +339,65 @@ check_file(const char* filename, int force)
     return 0;
 }
 
+/*
+ * The absolute path of a file. A file that does not exist yet has none to look
+ * up, so its directory is resolved and the file name put back on.
+ */
+const char*
+resolve_path(const char* filename, char* resolved)
+{
+    char dir_buf[PATH_MAX], base_buf[PATH_MAX], dir_resolved[PATH_MAX];
+
+    if (realpath(filename, resolved)) {
+        return resolved;
+    }
+
+    if (strlen(filename) < PATH_MAX) {
+        strcpy(dir_buf, filename);
+        strcpy(base_buf, filename);
+        if (realpath(dirname(dir_buf), dir_resolved)) {
+            const char* dir = strcmp(dir_resolved, "/") ? dir_resolved : "";
+            int len = snprintf(resolved, PATH_MAX, "%s/%s", dir, basename(base_buf));
+
+            if (len > 0 && len < PATH_MAX) {
+                return resolved;
+            }
+        }
+    }
+
+    return filename;
+}
+
 int
 send_file(int sockfd, const char* filename, const char* display_name, int line)
 {
+    size_t size = 0;
     int fd = open(filename, O_RDONLY | O_CLOEXEC);
-    if (fd == -1) {
-        log_msg(ERROR, "Failed to open file %s: %s", filename, strerror(errno));
-        return -1;
-    }
 
-    struct stat st;
-    if (fstat(fd, &st) == -1) {
-        log_msg(ERROR, "Failed to stat file %s: %s", filename, strerror(errno));
-        close(fd);
-        return -1;
+    if (fd == -1) {
+        /* A file that does not exist yet is sent empty. */
+        if (errno != ENOENT) {
+            log_msg(ERROR, "Failed to open file %s: %s", filename, strerror(errno));
+            return -1;
+        }
+    } else {
+        struct stat st;
+
+        if (fstat(fd, &st) == -1) {
+            log_msg(ERROR, "Failed to stat file %s: %s", filename, strerror(errno));
+            close(fd);
+            return -1;
+        }
+        size = (size_t)st.st_size;
     }
 
     char resolved[PATH_MAX];
-    const char* rpath = realpath(filename, resolved);
-    if (!rpath) {
-        rpath = filename;
-    }
+    const char* rpath = resolve_path(filename, resolved);
 
-    int ret = send_open(sockfd, display_name, rpath, filename, fd, NULL, (size_t)st.st_size, line);
-    close(fd);
+    int ret = send_open(sockfd, display_name, rpath, filename, fd, NULL, size, line);
+    if (fd != -1) {
+        close(fd);
+    }
     return ret;
 }
 

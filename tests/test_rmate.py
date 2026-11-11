@@ -259,16 +259,38 @@ class OpenTest(RmateTestCase):
         self.assertEqual(self.read(name), b"neu\n")
 
     def test_new_file_is_created_by_save(self):
-        result = self.edit(["new.txt"], lambda editor: editor.save("new.txt", b"hello\n"))
-        self.assertEqual(result.status, 0, result.stderr)
-        self.assertEqual([o["content"] for o in result.opens], [b""])
-        self.assertEqual(self.read("new.txt"), b"hello\n")
+        os.mkdir(self.path("sub"))
+        for name in ("new.txt", "sub/new.txt"):
+            with self.subTest(name=name):
+                result = self.edit([name], lambda editor: editor.save(name, b"hello\n"))
+                self.assertEqual(result.status, 0, result.stderr)
+                self.assertEqual([o["content"] for o in result.opens], [b""])
+                self.assertEqual(result.opens[0]["real-path"], os.path.join(os.path.realpath(self.dir), name))
+                self.assertEqual(self.read(name), b"hello\n")
 
-    @unittest.expectedFailure  # the file is created as soon as it is opened
     def test_new_file_is_not_created_without_save(self):
         result = self.edit(["typo.txt"], lambda editor: editor.close_file("typo.txt"))
+        self.assertEqual(result.status, 0, result.stderr)
         self.assertEqual(len(result.opens), 1)
         self.assertIsNone(self.read("typo.txt"))
+
+    def test_new_file_in_a_missing_directory_is_refused(self):
+        result = self.edit(["no-such-dir/new.txt"])
+        self.assertNotEqual(result.status, 0)
+        self.assertEqual(result.opens, [])
+        self.assertIn("no-such-dir", result.stderr)
+
+    @unittest.skipIf(os.geteuid() == 0, "root may write to read-only directories")
+    def test_new_file_in_a_read_only_directory_needs_force(self):
+        os.mkdir(self.path("ro"))
+        os.chmod(self.path("ro"), 0o555)
+        self.addCleanup(os.chmod, self.path("ro"), 0o755)
+        refused = self.edit(["ro/new.txt"])
+        self.assertNotEqual(refused.status, 0)
+        self.assertEqual(refused.opens, [])
+        self.assertIn("cannot be created", refused.stderr)
+        forced = self.edit(["ro/new.txt"], options=["-f"])
+        self.assertEqual(len(forced.opens), 1)
 
     @unittest.skipIf(os.geteuid() == 0, "root may write to read-only files")
     def test_read_only_file_is_refused(self):

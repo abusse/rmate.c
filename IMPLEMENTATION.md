@@ -75,7 +75,9 @@ Finally, `"\n.\n"` terminates the command.
 Two convenience wrappers call `send_open()`:
 
 - **`send_file()`**: Opens the file, `fstat()`s it for the size, resolves the
-  real path, and calls `send_open()` with the file descriptor.
+  real path, and calls `send_open()` with the file descriptor. A file that
+  does not exist yet is sent with no data; `resolve_path()` gives it a real
+  path by resolving its directory.
 - **`send_stdin()`**: Calls `send_open()` with the pre-read stdin buffer,
   using `"-"` for both real-path and token.
 
@@ -249,8 +251,12 @@ unread data with a short timeout, then closes the socket.
 
 Validates a filename before opening: rejects names containing `\n` or `\r`
 (to prevent protocol injection), checks that the path is a regular file,
-and verifies write permission (unless `-f` is set). Creates the file if it
-does not exist.
+and verifies write permission (unless `-f` is set).
+
+A file that does not exist is not created here. Its first save does that, so
+opening a mistyped name and closing it again leaves nothing behind.
+`check_new_file()` only makes sure the directory exists and is writable
+(unless `-f` is set).
 
 ## Connection Lifecycle
 
