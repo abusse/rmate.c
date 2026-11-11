@@ -366,7 +366,6 @@ class SaveTest(RmateTestCase):
         self.assertEqual(result.status, 0, result.stderr)
         self.assertEqual(self.read("file.txt"), b"new\n")
 
-    @unittest.expectedFailure  # an incomplete header line resets the parser and the save is dropped
     def test_header_line_split_across_packets(self):
         self.write("file.txt", b"old\n")
 

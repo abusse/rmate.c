@@ -423,7 +423,8 @@ handle_line(int sockfd, char* buf, size_t len, struct cmd* cmd_state, int* save_
 
         case CMD_VAR:
             if ((read_len = read_line(buf, len)) == 0) {
-                goto reset_cmd;
+                /* The line is not complete yet: stay in this state until the rest arrives. */
+                break;
             }
 
             if (*buf == '\0') {
