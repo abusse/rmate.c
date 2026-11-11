@@ -143,6 +143,17 @@ See [BENCHMARK.md](BENCHMARK.md) for detailed measurements. Summary:
 | Memory (file mode) | **1.7 MB constant** | 3.7 MB constant | Scales with file | Scales with file |
 | Memory (100 MB stdin) | **104 MB** | 496 MB | 215 MB | 120 MB |
 
+## Testing
+
+```sh
+make check
+```
+
+builds `rmate` and runs the tests in `tests/test_rmate.py` against it. They need
+Python 3 and nothing else: a fake editor in the test file plays the editor side
+of the protocol the way RemoteSubl does, so no editor and no SSH tunnel are
+involved. Tests marked as expected failures document known defects.
+
 ## Protocol
 
 See [PROTOCOL.md](PROTOCOL.md) for a description of the rmate wire protocol.

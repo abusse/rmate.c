@@ -15,6 +15,7 @@ endif
 
 PREFIX ?= /usr/bin
 DESTDIR ?= /
+PYTHON ?= python3
 
 .SUFFIXES: .o
 .c.o:
@@ -25,6 +26,9 @@ all: $(PROGRAM)
 $(PROGRAM): $(OBJS)
 	$(CC) $(CFLAGS) $? -o $@
 
+check: $(PROGRAM)
+	RMATE=./$(PROGRAM) $(PYTHON) tests/test_rmate.py
+
 clean:
 	$(RM) $(PROGRAM) $(OBJS)
 
@@ -32,4 +36,4 @@ install: $(PROGRAM)
 	install -d $(DESTDIR)/$(PREFIX)
 	install $(PROGRAM) $(DESTDIR)/$(PREFIX)/$(PROGRAM)
 
-.PHONY: clean all
+.PHONY: clean all check
