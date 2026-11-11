@@ -113,11 +113,11 @@ panic, it's not just trivial AI generated code :-).
   shift unconsumed bytes to the front of the buffer, correctly handling TCP
   fragmentation where a single `read()` may return partial lines. The original
   assumed each `read()` returned aligned protocol messages.
-- **Save-path error resilience**: `receive_save` uses a drain mode — if
-  writing to disk fails, it continues reading from the socket to keep the
-  protocol stream in sync rather than leaving the connection in an
-  indeterminate state. Save failures are counted and reflected in the exit
-  code without aborting saves for other files.
+- **Save-path error resilience**: The data of a save is received completely
+  before the file is opened, so a connection that drops mid-save leaves the
+  file as it was. If writing to disk then fails, the protocol stream is still
+  in sync. Save failures are counted and reflected in the exit code without
+  aborting saves for other files.
 - **Clean socket shutdown**: Uses `shutdown(SHUT_WR)` followed by a timed
   drain before `close()`, preventing RST packets on macOS/BSD.
 - **Proper background detach**: Uses `fork()` + `setsid()` to fully detach
@@ -142,6 +142,10 @@ See [BENCHMARK.md](BENCHMARK.md) for detailed measurements. Summary:
 | Startup | **0.3 ms** | 2.2 ms | 34 ms | 44 ms |
 | Memory (file mode) | **1.7 MB constant** | 3.7 MB constant | Scales with file | Scales with file |
 | Memory (100 MB stdin) | **104 MB** | 496 MB | 215 MB | 120 MB |
+
+The memory figures are for sending a file to the editor. A save coming back
+is held in memory until it is complete, so it needs as much as the file is
+large.
 
 ## Testing
 

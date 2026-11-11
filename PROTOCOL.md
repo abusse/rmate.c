@@ -74,9 +74,12 @@ data: 5678\n
 \n
 ```
 
-The client matches the `token` to the original filename, reads `data` bytes
-(partly from the buffer, the rest directly from the socket), and writes them
-to disk. After the data, an empty line ends the command.
+The client reads the `data` bytes (partly from the buffer, the rest directly
+from the socket) and, once it has all of them, writes them to the file named
+by `token`. After the data, an empty line ends the command.
+
+If `data` is not a plain decimal number, the client gives up on the
+connection: it cannot tell where the data ends.
 
 ### Close Command
 

@@ -18,7 +18,6 @@ protocol helpers, then option parsing and high-level orchestration, then
 struct cmd {
     enum CMD_STATE state;   /* CMD_HEADER, CMD_CMD, or CMD_VAR */
     char* filename;         /* token from the server (heap-allocated) */
-    size_t file_len;        /* byte count from the "data:" field */
 };
 ```
 
@@ -113,15 +112,16 @@ A dispatch function driven by `cmd_state->state`:
 - **CMD_CMD**: Read a command name. Reset state, then transition to CMD_VAR.
 - **CMD_VAR**: Parse `key: value`. On `token:`, save the filename. On
   `data:`, call `receive_save()`. On empty line or parse error, transition
-  back to CMD_CMD.
+  back to CMD_CMD. A `data:` value that is not a plain decimal number ends
+  the session: without the length there is no telling where the data ends.
 
 ### receive\_save()
 
-Writes incoming file data to disk:
+Takes in the data of a save and writes it to disk:
 
 ```c
 ssize_t receive_save(int sockfd,
-                     char* buf_remaining,
+                     const char* buf_remaining,
                      size_t buf_remaining_len,
                      const char* filename,
                      size_t file_size,
@@ -130,28 +130,34 @@ ssize_t receive_save(int sockfd,
 
 When `handle_line()` encounters `data: N`, some of the N file bytes may
 already be in the protocol buffer (read in the same TCP segment as the
-`data:` header). `receive_save()` handles this in two steps:
+`data:` header). `receive_save()` handles this in three steps:
 
-1. Write `buf_remaining` (the bytes already in the buffer) to the file.
-2. Call `stream_data()` to read the remaining bytes directly from the socket
-   and write them to the file.
+1. Copy `buf_remaining` (the bytes already in the buffer) into a heap buffer
+   of N bytes.
+2. Call `read_all()` to read the remaining bytes from the socket into that
+   buffer.
+3. Call `write_save()` to open the file and write the buffer to it.
 
-If the token is `"-"`, it writes to stdout instead of a file, enabling
-`echo "text" | rmate -w - > edited.txt`.
+The file is not opened before all N bytes have arrived. Until then the save
+can still fall through — the connection drops, or N is nonsense — and
+opening the file means truncating it. The price is memory: a save needs as
+much of it as the file is large. (Sending a file to the editor is streamed
+and needs none.)
 
-**Drain mode**: If writing to disk fails (e.g., disk full), `stream_data()`
-switches to drain-only mode — it continues reading from the socket but
-discards the data. This keeps the protocol stream in sync so subsequent
-commands on the same connection still parse correctly.
+If the token is `"-"`, `write_save()` writes to stdout instead of a file,
+enabling `echo "text" | rmate -w - > edited.txt`.
 
 **Save error tracking**: A single rmate connection handles saves for all open
 files. If `receive_save()` returned a fatal error on one file's save failure,
 the receive loop would exit and subsequent saves for other files would never
-be processed. To avoid this, save failures (open error, write error, or
-`stream_data()` write failure) increment the caller's `*save_errors` counter
-instead of returning -1. The data is drained to keep the protocol in sync,
-and the loop continues. After the loop exits, the counter is checked and
-the process exit code is set to 1 if any saves failed.
+be processed. To avoid this, a save that fails after its data has arrived (no
+token, open error, write error) increments the caller's `*save_errors`
+counter instead of returning -1. The data has been consumed, so the protocol
+is still in sync and the loop continues. After the loop exits, the counter is
+checked and the process exit code is set to 1 if any saves failed.
+
+Only a failure to get the data itself (allocation, read error, connection
+closed) returns -1 and ends the session.
 
 ## I/O Helpers
 
@@ -159,6 +165,12 @@ the process exit code is set to 1 if any saves failed.
 
 Retries `write()` in a loop until all bytes are sent, handling `EINTR` and
 short writes. Returns 0 on success, -1 on error.
+
+### read\_all()
+
+Retries `read()` in a loop until exactly the requested number of bytes has
+arrived, handling `EINTR` and short reads. Returns 0 on success, -1 on error
+or if the other side closes the connection first.
 
 ### stream\_data()
 
@@ -305,5 +317,6 @@ allocations, socket) on every exit path.
 distinguish success, error, and early exit (help/version).
 
 Save failures during the receive loop are non-fatal: `receive_save()`
-increments a `save_errors` counter and drains the data to keep the protocol
-in sync. The exit code is set to 1 after the loop if any saves failed.
+increments a `save_errors` counter, and since it has consumed the data by
+then, the protocol stays in sync. The exit code is set to 1 after the loop
+if any saves failed.

@@ -4,6 +4,7 @@
 #include <netdb.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,6 @@ struct cmd
 {
     enum CMD_STATE state;
     char* filename;
-    size_t file_len;
 };
 
 enum log_type
@@ -138,6 +138,32 @@ write_all(int fd, const char* buf, size_t len)
         }
         buf += n;
         len -= n;
+    }
+    return 0;
+}
+
+/* Reads exactly len bytes. Fails if the other side closes the connection first. */
+int
+read_all(int fd, char* buf, size_t len)
+{
+    size_t missing = len;
+
+    while (missing > 0) {
+        ssize_t n = read(fd, buf, missing);
+
+        if (n == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+            log_msg(ERROR, "Failed to read data: %s", strerror(errno));
+            return -1;
+        }
+        if (n == 0) {
+            log_msg(ERROR, "Connection closed with %zu of %zu bytes still missing", missing, len);
+            return -1;
+        }
+        buf += n;
+        missing -= n;
     }
     return 0;
 }
@@ -322,55 +348,98 @@ send_file(int sockfd, const char* filename, const char* display_name, int line)
     return ret;
 }
 
-ssize_t
-receive_save(int sockfd,
-             char* buf_remaining,
-             size_t buf_remaining_len,
-             const char* filename,
-             size_t file_size,
-             int* save_errors)
+int
+write_save(const char* filename, const char* data, size_t len)
 {
     int fd;
-    int write_failed = 0;
 
     if (!strcmp(filename, "-")) {
-        log_msg(INFO, "Writing %zu bytes to stdout", file_size);
+        log_msg(INFO, "Writing %zu bytes to stdout", len);
         fd = fcntl(STDOUT_FILENO, F_DUPFD_CLOEXEC, 0);
     } else {
-        log_msg(INFO, "Saving %s (%zu bytes)", filename, file_size);
+        log_msg(INFO, "Saving %s (%zu bytes)", filename, len);
         fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     }
 
     if (fd == -1) {
         log_msg(ERROR, "Failed to open %s for writing: %s", filename, strerror(errno));
-        write_failed = 1;
+        return -1;
     }
 
-    /* buf_remaining holds file data already in the protocol read buffer. */
-    size_t to_read = (buf_remaining_len < file_size) ? buf_remaining_len : file_size;
-
-    if (fd >= 0 && to_read > 0 && write_all(fd, buf_remaining, to_read) == -1) {
+    if (write_all(fd, data, len) == -1) {
         log_msg(ERROR, "Failed to write to %s: %s", filename, strerror(errno));
         close(fd);
-        fd = -1;
-        write_failed = 1;
+        return -1;
+    }
+    if (close(fd) == -1) {
+        log_msg(ERROR, "Failed to write to %s: %s", filename, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * Takes in the file_size bytes of a save. The first buf_remaining_len of them
+ * are already in the protocol read buffer, the rest is read from the socket.
+ *
+ * The file is opened only after all of the data has arrived. Until then the
+ * save can still fall through (connection lost, bogus length) and must not
+ * have touched the file.
+ *
+ * Returns the number of bytes taken from buf_remaining, or -1 if the data
+ * could not be read, which leaves the connection unusable. A save that fails
+ * later than that is counted in *save_errors and the session carries on.
+ */
+ssize_t
+receive_save(int sockfd,
+             const char* buf_remaining,
+             size_t buf_remaining_len,
+             const char* filename,
+             size_t file_size,
+             int* save_errors)
+{
+    size_t from_buf = (buf_remaining_len < file_size) ? buf_remaining_len : file_size;
+    char* data = malloc(file_size ? file_size : 1);
+
+    if (!data) {
+        log_msg(ERROR, "Failed to allocate %zu bytes for a save: %s", file_size, strerror(errno));
+        return -1;
     }
 
-    ssize_t ret = (ssize_t)to_read;
-    int drain_ret = stream_data(sockfd, fd, file_size - to_read, 1);
-    if (drain_ret < 0) {
-        ret = -1;
-    } else if (drain_ret > 0) {
-        write_failed = 1;
+    memcpy(data, buf_remaining, from_buf);
+    if (read_all(sockfd, data + from_buf, file_size - from_buf) == -1) {
+        free(data);
+        return -1;
     }
 
-    if (fd >= 0) {
-        close(fd);
-    }
-    if (write_failed && ret >= 0) {
+    if (!filename) {
+        log_msg(ERROR, "Received data without token, ignoring");
+        (*save_errors)++;
+    } else if (write_save(filename, data, file_size) == -1) {
         (*save_errors)++;
     }
-    return ret;
+
+    free(data);
+    return (ssize_t)from_buf;
+}
+
+/* Accepts a plain decimal number only: no sign, no blanks, nothing after it. */
+int
+parse_data_len(const char* str, size_t* len)
+{
+    char* endp;
+    unsigned long long val;
+
+    if (*str < '0' || *str > '9') {
+        return -1;
+    }
+    errno = 0;
+    val = strtoull(str, &endp, 10);
+    if (errno || *endp != '\0' || val > SIZE_MAX) {
+        return -1;
+    }
+    *len = (size_t)val;
+    return 0;
 }
 
 ssize_t
@@ -451,23 +520,20 @@ handle_line(int sockfd, char* buf, size_t len, struct cmd* cmd_state, int* save_
                     return -1;
                 }
             } else if (!strcmp(name, "data")) {
-                char* endp;
-                errno = 0;
-                cmd_state->file_len = strtoul(value, &endp, 10);
-                if (errno || endp == value) {
-                    log_msg(WARNING, "Invalid data length: %s, ignoring", value);
-                    goto reset_cmd;
+                size_t data_len;
+                ssize_t data_consumed;
+
+                if (parse_data_len(value, &data_len) == -1) {
+                    /* Without the length there is no telling where the data ends. */
+                    log_msg(ERROR, "Invalid data length: %s", value);
+                    return -1;
                 }
-                if (!cmd_state->filename) {
-                    log_msg(WARNING, "Received data without token, ignoring");
-                } else {
-                    ssize_t data_consumed = receive_save(
-                      sockfd, buf + read_len, len - read_len, cmd_state->filename, cmd_state->file_len, save_errors);
-                    if (data_consumed < 0) {
-                        return -1;
-                    }
-                    read_len += data_consumed;
+                data_consumed =
+                  receive_save(sockfd, buf + read_len, len - read_len, cmd_state->filename, data_len, save_errors);
+                if (data_consumed < 0) {
+                    return -1;
                 }
+                read_len += data_consumed;
             }
             break;
 

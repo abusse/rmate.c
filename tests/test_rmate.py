@@ -397,7 +397,6 @@ class SaveTest(RmateTestCase):
 class SaveSafetyTest(RmateTestCase):
     """Whatever the editor or the network do, files must not be damaged."""
 
-    @unittest.expectedFailure  # the file is truncated before its new content has arrived
     def test_connection_lost_mid_save_keeps_the_file(self):
         old, new = lines_of_text(50000, "old"), lines_of_text(60000, "new")
         self.write("file.txt", old)
@@ -406,19 +405,16 @@ class SaveSafetyTest(RmateTestCase):
         self.assertEqual(self.read("file.txt"), old)
         self.assertNotEqual(result.status, 0)
 
-    def test_garbage_data_length_keeps_the_file(self):
-        self.write("file.txt", b"old\n")
-        self.edit(["file.txt"], lambda editor: editor.send(b"save\ntoken: file.txt\ndata: abc\n\n"))
-        self.assertEqual(self.read("file.txt"), b"old\n")
+    def test_invalid_data_length_keeps_the_file_and_ends_the_session(self):
+        for length in (b"abc", b"-1", b"", b"12 ", b"99999999999999999999999999"):
+            with self.subTest(length=length):
+                self.write("file.txt", b"old\n")
+                result = self.edit(["file.txt"], lambda editor: editor.send(
+                    b"save\ntoken: file.txt\ndata: " + length + b"\n\n"))
+                self.assertEqual(self.read("file.txt"), b"old\n")
+                self.assertNotEqual(result.status, 0)
+                self.assertIn("Invalid data length", result.stderr)
 
-    @unittest.expectedFailure  # "-1" is taken as a huge length, after the file has been truncated
-    def test_negative_data_length_keeps_the_file(self):
-        self.write("file.txt", b"old\n")
-        result = self.edit(["file.txt"], lambda editor: editor.send(b"save\ntoken: file.txt\ndata: -1\n\n"))
-        self.assertEqual(self.read("file.txt"), b"old\n")
-        self.assertNotEqual(result.status, 0)
-
-    @unittest.expectedFailure  # the payload is not consumed and gets parsed as commands
     def test_payload_of_a_save_without_token_is_not_parsed(self):
         self.write("file.txt", b"old\n")
         payload = b"\nsave\ntoken: file.txt\ndata: 4\nbad\n\n"
